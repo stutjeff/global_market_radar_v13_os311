@@ -1,4 +1,4 @@
-name: 全球市場雷達 V13 + OS 3.1.1 手機版
+name: 全球市場雷達 V13.1 + OS 3.1.1 手機版
 
 permissions:
   contents: write
@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   run-radar:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
 
     steps:
@@ -35,6 +36,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           python main.py
 
