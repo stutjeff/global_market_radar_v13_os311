@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-全球市場雷達 v13｜總控 + 產業輪動 + Reddit 題材整合版
+全球市場雷達 v13.1｜總控 + 產業輪動 + Reddit 題材整合版
 
 V13 重點：
 1. 警報權重分數：輸出 0~100 市場風險總分與等級。
@@ -1192,7 +1192,7 @@ def score_fed_liquidity(df: pd.DataFrame) -> RadarResult:
         elif chg4 > 100_000:
             score += add_signal(signals, 8, "Fed資產負債表擴張", f"4週增加約 {chg4/1000:.1f} 十億美元")
     else:
-        notes.append("Fed資產負債表 WALCL 資料不足；FRED 可能暫時無法讀取。")
+        notes.append("Fed資產負債表 WALCL 資料不足（可用 FRED_API_KEY 改善）；FRED 可能暫時無法讀取。")
 
     if len(reserves) >= 5:
         chg4 = reserves.iloc[-1] - reserves.iloc[-5]  # billion USD
@@ -1202,7 +1202,7 @@ def score_fed_liquidity(df: pd.DataFrame) -> RadarResult:
         elif chg4 > 100:
             score += add_signal(signals, 8, "銀行準備金增加", f"4週增加約 {chg4:.1f} 十億美元")
     else:
-        notes.append("銀行準備金 WRESBAL 資料不足。")
+        notes.append("銀行準備金 WRESBAL 資料不足（可用 FRED_API_KEY 改善）。")
 
     if len(rrp) >= 20:
         chg20 = rrp.iloc[-1] - rrp.iloc[-20]
@@ -1212,7 +1212,7 @@ def score_fed_liquidity(df: pd.DataFrame) -> RadarResult:
         elif chg20 < -100:
             score += add_signal(signals, 5, "RRP下降", f"20筆減少約 {abs(chg20):.1f} 十億美元")
     else:
-        notes.append("逆回購 RRP 資料不足。")
+        notes.append("逆回購 RRP 資料不足（可用 FRED_API_KEY 改善）。")
 
     if len(discount) >= 5:
         chg4 = discount.iloc[-1] - discount.iloc[-5]
@@ -1223,7 +1223,7 @@ def score_fed_liquidity(df: pd.DataFrame) -> RadarResult:
         elif level > 10 or chg4 > 5:
             score += add_signal(signals, 7, "貼現窗口使用升溫", f"DPCREDIT={level:.1f} 十億美元，4週變化 {chg4:.1f}")
     else:
-        notes.append("貼現窗口 DPCREDIT 資料不足。")
+        notes.append("貼現窗口 DPCREDIT 資料不足（可用 FRED_API_KEY 改善）。")
 
     # High rates + renewed liquidity = late-cycle pressure / policy contradiction watch
     try:
@@ -1890,13 +1890,13 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     level, level_name = score_level(total_risk)
     lines: List[str] = []
 
-    lines.append("🌐 全球市場雷達 v13｜總控 + 產業輪動 + Reddit 題材整合版")
+    lines.append("🌐 全球市場雷達 v13.1｜總控 + 產業輪動 + Reddit 題材整合版")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     lines.append(f"市場風險總分：{total_risk:.1f}/100")
     lines.append(f"等級：{level}")
     if raw_mode:
-        lines.append(f"V13 原始訊號：{raw_mode}")
+        lines.append(f"V13.1 原始訊號：{raw_mode}")
     lines.append(f"OS 3.1.1 最終操作模式：{mode}")
     lines.append(f"配置比例：{format_mode(mode)}")
     if os_state is not None:
@@ -1973,7 +1973,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     lines.append("- 433 是 R模式 / 危機後確認反攻；OS 3.1.1 規定沒有 crisis_memory 不啟動 433。")
     lines.append("- 主要觸發：VIX > 35 後回落、Nasdaq/SOXX 止跌、HYG/LQD 不再下跌、美債殖利率停止急升、00662 接近長期均線；433 最短持有 8 週，除非重新切 514。")
     lines.append("")
-    lines.append("提醒：你的 V13 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
+    lines.append("提醒：你的 V13.1 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
     return "\n".join(lines)
 
 
@@ -2103,7 +2103,7 @@ def theme_strength(df: pd.DataFrame, tickers: List[str]) -> Dict[str, object]:
 def build_industry_message(df: pd.DataFrame) -> str:
     now = TODAY.strftime("%Y-%m-%d %H:%M")
     lines: List[str] = []
-    lines.append("🏭 全球市場雷達 v13｜產業輪動雷達")
+    lines.append("🏭 全球市場雷達 v13.1｜產業輪動雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     all_themes = []
@@ -2241,7 +2241,7 @@ def build_topic_message() -> str:
     scored = score_topics(items)
 
     lines: List[str] = []
-    lines.append("🧭 全球市場雷達 v13｜Reddit / Hacker News / Google News 題材雷達")
+    lines.append("🧭 全球市場雷達 v13.1｜Reddit / Hacker News / Google News 題材雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     if not items:
@@ -2308,7 +2308,7 @@ def main() -> None:
             data_health_ok=data_health_ok,
             data_health_warnings=data_health_warnings,
         )
-        reasons = [f"V13 原始訊號：{raw_mode}。"] + os_reasons + reasons
+        reasons = [f"V13.1 原始訊號：{raw_mode}。"] + os_reasons + reasons
         save_os31_state(new_os31_state)
 
         # 第一則：全球總控
@@ -2336,10 +2336,107 @@ def main() -> None:
         time.sleep(1.2)
         send_telegram(msg3)
     except Exception as e:
-        err = "🚨 全球市場雷達 v13 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
+        err = "🚨 全球市場雷達 v13.1 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
         print(err)
         send_telegram(err[:3800])
         raise
+
+
+# ------------------------------------------------------------
+# V13.1 FRED hardened fetcher override
+# ------------------------------------------------------------
+def fetch_fred_series(series_id: str) -> pd.Series:
+    """Fetch FRED series with multiple fallbacks.
+
+    Priority:
+    1) Official FRED API if FRED_API_KEY is provided in GitHub Secrets.
+    2) FRED public fredgraph CSV.
+    3) FRED CSV through a simple raw proxy as last resort.
+
+    If all fail, return empty series and let the Fed liquidity module degrade gracefully.
+    """
+    from io import StringIO
+    import urllib.parse
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.1",
+        "Accept": "application/json,text/csv,text/plain,*/*",
+        "Cache-Control": "no-cache",
+    }
+
+    api_key = os.environ.get("FRED_API_KEY", "").strip()
+    if api_key:
+        try:
+            r = requests.get(
+                "https://api.stlouisfed.org/fred/series/observations",
+                params={
+                    "series_id": series_id,
+                    "api_key": api_key,
+                    "file_type": "json",
+                    "observation_start": "2018-01-01",
+                },
+                headers=headers,
+                timeout=25,
+            )
+            if r.status_code == 200:
+                obs = r.json().get("observations", [])
+                rows = []
+                for x in obs:
+                    v = x.get("value")
+                    if v in (None, "", "."):
+                        continue
+                    d = pd.to_datetime(x.get("date"), errors="coerce")
+                    val = safe_float(v)
+                    if not pd.isna(d) and not pd.isna(val):
+                        rows.append((d, val))
+                if rows:
+                    s = pd.Series([v for _, v in rows], index=[d for d, _ in rows]).dropna().astype(float)
+                    if len(s):
+                        return s
+        except Exception:
+            pass
+
+    urls = [
+        f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}",
+        f"https://fred.stlouisfed.org/graph/fredgraph.csv?cosd=2018-01-01&id={series_id}",
+    ]
+    for url in urls:
+        for _ in range(2):
+            try:
+                r = requests.get(url, headers=headers, timeout=25)
+                if r.status_code != 200 or not r.text.strip():
+                    time.sleep(0.8)
+                    continue
+                df = pd.read_csv(StringIO(r.text))
+                if "DATE" not in df.columns or series_id not in df.columns:
+                    time.sleep(0.8)
+                    continue
+                df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
+                vals = pd.to_numeric(df[series_id].replace(".", np.nan), errors="coerce")
+                s = pd.Series(vals.values, index=df["DATE"]).dropna().astype(float)
+                if len(s):
+                    return s
+            except Exception:
+                time.sleep(0.8)
+                continue
+
+    # Last resort proxy: relays official FRED CSV only. Not used as source of truth.
+    try:
+        base_url = urls[0]
+        purl = "https://api.allorigins.win/raw?url=" + urllib.parse.quote(base_url, safe="")
+        r = requests.get(purl, headers=headers, timeout=30)
+        if r.status_code == 200 and r.text.strip():
+            df = pd.read_csv(StringIO(r.text))
+            if "DATE" in df.columns and series_id in df.columns:
+                df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
+                vals = pd.to_numeric(df[series_id].replace(".", np.nan), errors="coerce")
+                s = pd.Series(vals.values, index=df["DATE"]).dropna().astype(float)
+                if len(s):
+                    return s
+    except Exception:
+        pass
+
+    return pd.Series(dtype=float)
 
 def _v13_save_snapshot():
     try:
@@ -2347,7 +2444,7 @@ def _v13_save_snapshot():
         from datetime import datetime
         from zoneinfo import ZoneInfo
         snap = {
-            "version": "v13-mobile-flat",
+            "version": "v13.1-mobile-flat",
             "time_taipei": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
             "state_file": STATE_FILE,
             "tw_margin_history_file": MARGIN_HISTORY_FILE,
@@ -2362,9 +2459,9 @@ def _v13_save_snapshot():
         with open("storage/last_radar_snapshot.json", "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
         with open("storage/source_status.json", "w", encoding="utf-8") as f:
-            json.dump({"engine": {"status": "ok", "version": "v13-mobile-flat"}}, f, ensure_ascii=False, indent=2)
+            json.dump({"engine": {"status": "ok", "version": "v13.1-mobile-flat"}}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("V13 snapshot save failed:", e)
+        print("V13.1 snapshot save failed:", e)
 
 if __name__ == "__main__":
     try:
@@ -2377,7 +2474,7 @@ if __name__ == "__main__":
             if token and chat_id:
                 requests.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
+                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.1 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
                     timeout=15,
                 )
         except Exception:
