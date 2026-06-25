@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-全球市場雷達 v13.2｜總控 + 產業輪動 + Reddit 題材整合版
+全球市場雷達 v13.3｜總控 + 產業輪動 + Reddit 題材整合版
 
 V13 重點：
 1. 警報權重分數：輸出 0~100 市場風險總分與等級。
@@ -44,10 +44,11 @@ OS31_STATE_FILE = "storage/os31_state.json"
 OS31_MIN_433_HOLD_WEEKS = 8
 MARGIN_HISTORY_FILE = "storage/tw_margin_history.csv"
 TPEX_MARGIN_HISTORY_FILE = "storage/tpex_margin_history.csv"
+PRIVATE_CREDIT_AUX_TICKERS = ["BKLN", "SRLN", "BIZD", "JAAA", "JBBB", "ARCC", "BXSL", "OBDC", "MAIN", "FSK"]
 
 # Data Health Gate:
 # A-grade core data. If these are too stale, OS 3.1.1 will not execute a mode switch.
-DATA_HEALTH_CORE_TICKERS = ["^VIX", "QQQ", "HYG", "BKLN", "SRLN", "BIZD", "JAAA", "JBBB", "ARCC", "BXSL", "OBDC", "MAIN", "FSK", "LQD", "00662.TW", "00670L.TW", "00865B.TW"]
+DATA_HEALTH_CORE_TICKERS = ["^VIX", "QQQ", "HYG", "LQD", "00662.TW", "00670L.TW", "00865B.TW"]
 DATA_HEALTH_SECONDARY_TICKERS = ["SMH", "SOXX", "^TWII", "SPY", "RSP", "IWM", "SHY", "JPY=X", "^TNX"]
 DATA_HEALTH_MAX_CORE_STALE_DAYS = 3
 DATA_HEALTH_MAX_MARGIN_STALE_DAYS = 5
@@ -1430,7 +1431,7 @@ def score_private_credit_stress(df: pd.DataFrame) -> RadarResult:
             return np.nan
 
     # 2) Senior loan ETFs: BKLN / SRLN
-    for tk in ["BKLN", "SRLN"]:
+    for tk in ["SRLN"]:
         s = _etf(tk)
         if len(s) >= 60:
             r20 = ret(s, 20)
@@ -1441,7 +1442,7 @@ def score_private_credit_stress(df: pd.DataFrame) -> RadarResult:
             if not pd.isna(r20) and r20 < -0.02:
                 score += add_signal(signals, 7, f"{tk} 20日下跌", f"{pct(r20)}")
         elif len(s) > 0:
-            notes.append(f"{tk} 資料不足，暫不計分。")
+            notes.append(f"{tk} 資料不足，暫不計分；此為輔助資料，不影響 Data Health 主控。")
 
     # 3) CLO proxy: JBBB vs JAAA
     jaaa = _etf("JAAA")
@@ -1456,7 +1457,7 @@ def score_private_credit_stress(df: pd.DataFrame) -> RadarResult:
             if len(ratio) >= 60 and ratio.iloc[-1] < ratio.rolling(60).mean().iloc[-1]:
                 score += add_signal(signals, 5, "JBBB/JAAA 低於60日線", "CLO 風險層相對轉弱")
     else:
-        notes.append("JAAA/JBBB 資料不足，CLO proxy 暫不計分。")
+        notes.append("JAAA/JBBB 資料不足，CLO proxy 暫不計分；此為私募信貸輔助資料，不影響 Data Health 主控。")
 
     # 4) BDC / listed private-credit proxy: BIZD and major BDC names
     bizd = _etf("BIZD")
@@ -1474,11 +1475,11 @@ def score_private_credit_stress(df: pd.DataFrame) -> RadarResult:
             if not pd.isna(rel) and rel < -0.04:
                 score += add_signal(signals, 8, "BDC 明顯弱於 HYG", f"BIZD-HYG 20日相對 {pct(rel)}")
     elif len(bizd) > 0:
-        notes.append("BIZD 資料不足，暫不計分。")
+        notes.append("BIZD 資料不足，暫不計分；此為私募信貸輔助資料，不影響 Data Health 主控。")
 
     bdc_weak = 0
     bdc_total = 0
-    for tk in ["ARCC", "BXSL", "OBDC", "MAIN", "FSK"]:
+    for tk in ["FSK"]:
         s = _etf(tk)
         if len(s) >= 60:
             bdc_total += 1
@@ -2026,13 +2027,13 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     level, level_name = score_level(total_risk)
     lines: List[str] = []
 
-    lines.append("🌐 全球市場雷達 v13.2｜總控 + 產業輪動 + Reddit 題材整合版")
+    lines.append("🌐 全球市場雷達 v13.3｜總控 + 產業輪動 + Reddit 題材整合版")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     lines.append(f"市場風險總分：{total_risk:.1f}/100")
     lines.append(f"等級：{level}")
     if raw_mode:
-        lines.append(f"V13.2 原始訊號：{raw_mode}")
+        lines.append(f"V13.3 原始訊號：{raw_mode}")
     lines.append(f"OS 3.1.1 最終操作模式：{mode}")
     lines.append(f"配置比例：{format_mode(mode)}")
     if os_state is not None:
@@ -2109,7 +2110,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     lines.append("- 433 是 R模式 / 危機後確認反攻；OS 3.1.1 規定沒有 crisis_memory 不啟動 433。")
     lines.append("- 主要觸發：VIX > 35 後回落、Nasdaq/SOXX 止跌、HYG/LQD 不再下跌、美債殖利率停止急升、00662 接近長期均線；433 最短持有 8 週，除非重新切 514。")
     lines.append("")
-    lines.append("提醒：你的 V13.2 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
+    lines.append("提醒：你的 V13.3 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
     return "\n".join(lines)
 
 
@@ -2239,7 +2240,7 @@ def theme_strength(df: pd.DataFrame, tickers: List[str]) -> Dict[str, object]:
 def build_industry_message(df: pd.DataFrame) -> str:
     now = TODAY.strftime("%Y-%m-%d %H:%M")
     lines: List[str] = []
-    lines.append("🏭 全球市場雷達 v13.2｜產業輪動雷達")
+    lines.append("🏭 全球市場雷達 v13.3｜產業輪動雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     all_themes = []
@@ -2377,7 +2378,7 @@ def build_topic_message() -> str:
     scored = score_topics(items)
 
     lines: List[str] = []
-    lines.append("🧭 全球市場雷達 v13.2｜Reddit / Hacker News / Google News 題材雷達")
+    lines.append("🧭 全球市場雷達 v13.3｜Reddit / Hacker News / Google News 題材雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     if not items:
@@ -2422,7 +2423,7 @@ def main() -> None:
         results = [macro, credit, market, fed, private_credit, margin, breadth]
 
         # V13 總控權重：加入 Fed 流動性硬數據，但不讓單一模組主導。
-        # 宏觀 20%、信用 20%、市場動能 20%、Fed流動性 10%、私募信貸 10%、融資 10%、廣度/貪婪 10%。
+        # 總分權重：宏觀 20%、信用 20%、市場動能 20%、Fed流動性 10%、私募信貸 10%、融資 10%、廣度/貪婪 10%。
         total_risk = (
             macro.risk_pct * 0.20
             + credit.risk_pct * 0.20
@@ -2446,7 +2447,7 @@ def main() -> None:
             data_health_ok=data_health_ok,
             data_health_warnings=data_health_warnings,
         )
-        reasons = [f"V13.2 原始訊號：{raw_mode}。"] + os_reasons + reasons
+        reasons = [f"V13.3 原始訊號：{raw_mode}。"] + os_reasons + reasons
         save_os31_state(new_os31_state)
 
         # 第一則：全球總控
@@ -2474,7 +2475,7 @@ def main() -> None:
         time.sleep(1.2)
         send_telegram(msg3)
     except Exception as e:
-        err = "🚨 全球市場雷達 v13.2 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
+        err = "🚨 全球市場雷達 v13.3 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
         print(err)
         send_telegram(err[:3800])
         raise
@@ -2497,7 +2498,7 @@ def fetch_fred_series(series_id: str) -> pd.Series:
     import urllib.parse
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.2",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.3",
         "Accept": "application/json,text/csv,text/plain,*/*",
         "Cache-Control": "no-cache",
     }
@@ -2582,7 +2583,7 @@ def _v13_save_snapshot():
         from datetime import datetime
         from zoneinfo import ZoneInfo
         snap = {
-            "version": "v13.2-mobile-flat",
+            "version": "v13.3-mobile-flat",
             "time_taipei": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
             "state_file": STATE_FILE,
             "tw_margin_history_file": MARGIN_HISTORY_FILE,
@@ -2597,7 +2598,7 @@ def _v13_save_snapshot():
         with open("storage/last_radar_snapshot.json", "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
         with open("storage/source_status.json", "w", encoding="utf-8") as f:
-            json.dump({"engine": {"status": "ok", "version": "v13.2-mobile-flat"}}, f, ensure_ascii=False, indent=2)
+            json.dump({"engine": {"status": "ok", "version": "v13.3-mobile-flat"}}, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("V13.2 snapshot save failed:", e)
 
@@ -2612,7 +2613,7 @@ if __name__ == "__main__":
             if token and chat_id:
                 requests.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.2 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
+                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.3 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
                     timeout=15,
                 )
         except Exception:

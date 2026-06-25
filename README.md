@@ -55,3 +55,11 @@ TELEGRAM_CHAT_ID
 
 ## V13.2 Private Credit Stress
 新增私募信貸壓力 proxy 雷達。
+
+
+## V13.3 修正
+
+- 私募信貸 proxy ticker（BKLN/SRLN/BIZD/JAAA/JBBB/BDC 個股）改為輔助資料。
+- 這些 proxy 抓不到時，只讓「私募信貸壓力雷達」該項不計分，不再讓 Data Health 主控禁止模式切換。
+- 總分仍在主雷達最上方顯示為「市場風險總分」。
+- 台股融資若抓不到，仍只作趨勢參考，不應讓整體主控失真。
