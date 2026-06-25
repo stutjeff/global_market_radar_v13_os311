@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-全球市場雷達 v13.1｜總控 + 產業輪動 + Reddit 題材整合版
+全球市場雷達 v13.2｜總控 + 產業輪動 + Reddit 題材整合版
 
 V13 重點：
 1. 警報權重分數：輸出 0~100 市場風險總分與等級。
@@ -47,7 +47,7 @@ TPEX_MARGIN_HISTORY_FILE = "storage/tpex_margin_history.csv"
 
 # Data Health Gate:
 # A-grade core data. If these are too stale, OS 3.1.1 will not execute a mode switch.
-DATA_HEALTH_CORE_TICKERS = ["^VIX", "QQQ", "HYG", "LQD", "00662.TW", "00670L.TW", "00865B.TW"]
+DATA_HEALTH_CORE_TICKERS = ["^VIX", "QQQ", "HYG", "BKLN", "SRLN", "BIZD", "JAAA", "JBBB", "ARCC", "BXSL", "OBDC", "MAIN", "FSK", "LQD", "00662.TW", "00670L.TW", "00865B.TW"]
 DATA_HEALTH_SECONDARY_TICKERS = ["SMH", "SOXX", "^TWII", "SPY", "RSP", "IWM", "SHY", "JPY=X", "^TNX"]
 DATA_HEALTH_MAX_CORE_STALE_DAYS = 3
 DATA_HEALTH_MAX_MARGIN_STALE_DAYS = 5
@@ -1383,6 +1383,142 @@ def score_breadth_greed(df: pd.DataFrame) -> RadarResult:
     return RadarResult("市場廣度 / 貪婪 proxy 雷達", min(score, max_score), max_score, signals, notes)
 
 
+
+# ------------------------------------------------------------
+# V13.2 私募信貸壓力雷達 / Private Credit Stress proxy
+# ------------------------------------------------------------
+def score_private_credit_stress(df: pd.DataFrame) -> RadarResult:
+    """Private credit is opaque, so this is a proxy stress radar.
+
+    It watches adjacent public markets: HY OAS, senior loan ETFs, BDC proxies,
+    CLO ETF proxy, and private-credit related news keywords.
+    """
+    score = 0
+    max_score = 100
+    signals: List[str] = []
+    notes: List[str] = []
+
+    # 1) FRED HY OAS hard data. Unit: percentage points.
+    hy_oas = fetch_fred_series("BAMLH0A0HYM2")
+    if len(hy_oas) >= 20:
+        latest = float(hy_oas.iloc[-1])
+        chg20 = latest - float(hy_oas.iloc[-20])
+        notes.append(f"HY OAS：{hy_oas.index[-1].date()} | {latest:.2f}% | 20筆變化 {chg20:.2f}pct")
+        if latest > 8.0:
+            score += add_signal(signals, 18, "高收益債利差危機區", f"HY OAS={latest:.2f}%")
+        elif latest > 6.0:
+            score += add_signal(signals, 12, "高收益債利差壓力明顯", f"HY OAS={latest:.2f}%")
+        elif latest > 4.5:
+            score += add_signal(signals, 7, "高收益債利差升溫", f"HY OAS={latest:.2f}%")
+        if chg20 > 1.0:
+            score += add_signal(signals, 10, "HY OAS 快速擴大", f"20筆 +{chg20:.2f}pct")
+        elif chg20 > 0.5:
+            score += add_signal(signals, 6, "HY OAS 溫和擴大", f"20筆 +{chg20:.2f}pct")
+    else:
+        notes.append("HY OAS（BAMLH0A0HYM2）資料不足；FRED/API 若暫時失敗則略過。")
+
+    def _etf(name: str) -> pd.Series:
+        try:
+            return series(df, "Close", name)
+        except Exception:
+            return pd.Series(dtype=float)
+
+    def _ma(s: pd.Series, n: int) -> float:
+        try:
+            return float(s.rolling(n).mean().iloc[-1]) if len(s) >= n else np.nan
+        except Exception:
+            return np.nan
+
+    # 2) Senior loan ETFs: BKLN / SRLN
+    for tk in ["BKLN", "SRLN"]:
+        s = _etf(tk)
+        if len(s) >= 60:
+            r20 = ret(s, 20)
+            ma60 = _ma(s, 60)
+            notes.append(f"{tk} Senior Loan proxy：最新 {s.iloc[-1]:.2f} | 20日 {pct(r20)} | {'低於' if s.iloc[-1] < ma60 else '高於'}60日線")
+            if s.iloc[-1] < ma60:
+                score += add_signal(signals, 7, f"{tk} 跌破60日線", "槓桿貸款 / senior loan proxy 轉弱")
+            if not pd.isna(r20) and r20 < -0.02:
+                score += add_signal(signals, 7, f"{tk} 20日下跌", f"{pct(r20)}")
+        elif len(s) > 0:
+            notes.append(f"{tk} 資料不足，暫不計分。")
+
+    # 3) CLO proxy: JBBB vs JAAA
+    jaaa = _etf("JAAA")
+    jbbb = _etf("JBBB")
+    if len(jaaa) >= 40 and len(jbbb) >= 40:
+        ratio = (jbbb / jaaa).dropna()
+        if len(ratio) >= 20:
+            r20 = ret(ratio, 20)
+            notes.append(f"JBBB/JAAA CLO proxy：{ratio.iloc[-1]:.4f} | 20日 {pct(r20)}")
+            if not pd.isna(r20) and r20 < -0.015:
+                score += add_signal(signals, 8, "JBBB 弱於 JAAA", f"CLO BBB tranche proxy 20日 {pct(r20)}")
+            if len(ratio) >= 60 and ratio.iloc[-1] < ratio.rolling(60).mean().iloc[-1]:
+                score += add_signal(signals, 5, "JBBB/JAAA 低於60日線", "CLO 風險層相對轉弱")
+    else:
+        notes.append("JAAA/JBBB 資料不足，CLO proxy 暫不計分。")
+
+    # 4) BDC / listed private-credit proxy: BIZD and major BDC names
+    bizd = _etf("BIZD")
+    hyg = _etf("HYG")
+    if len(bizd) >= 200:
+        r20 = ret(bizd, 20)
+        ma200 = _ma(bizd, 200)
+        notes.append(f"BIZD BDC proxy：最新 {bizd.iloc[-1]:.2f} | 20日 {pct(r20)} | {'低於' if bizd.iloc[-1] < ma200 else '高於'}200日線")
+        if bizd.iloc[-1] < ma200:
+            score += add_signal(signals, 8, "BIZD 跌破200日線", "BDC / private-credit public proxy 轉弱")
+        if not pd.isna(r20) and r20 < -0.08:
+            score += add_signal(signals, 10, "BIZD 20日急跌", f"{pct(r20)}")
+        if len(hyg) >= 20:
+            rel = ret(bizd, 20) - ret(hyg, 20)
+            if not pd.isna(rel) and rel < -0.04:
+                score += add_signal(signals, 8, "BDC 明顯弱於 HYG", f"BIZD-HYG 20日相對 {pct(rel)}")
+    elif len(bizd) > 0:
+        notes.append("BIZD 資料不足，暫不計分。")
+
+    bdc_weak = 0
+    bdc_total = 0
+    for tk in ["ARCC", "BXSL", "OBDC", "MAIN", "FSK"]:
+        s = _etf(tk)
+        if len(s) >= 60:
+            bdc_total += 1
+            if s.iloc[-1] < _ma(s, 60):
+                bdc_weak += 1
+    if bdc_total:
+        notes.append(f"主要 BDC 弱勢計數：{bdc_weak}/{bdc_total} 低於60日線")
+        if bdc_total >= 3 and bdc_weak / bdc_total >= 0.6:
+            score += add_signal(signals, 8, "BDC 集體轉弱", f"{bdc_weak}/{bdc_total} 低於60日線")
+
+    # 5) News / topic stress keywords, using existing Google News helper if available.
+    try:
+        news_items = []
+        if "fetch_google_news" in globals():
+            for q in ["private credit redemption", "direct lending default", "BDC non-accrual", "private credit markdown", "leveraged loan distress"]:
+                try:
+                    news_items += fetch_google_news(q, limit=5)
+                except TypeError:
+                    news_items += fetch_google_news(q)
+                except Exception:
+                    continue
+        text_blob = " ".join([str(x) for x in news_items])[:12000].lower()
+        pc_keywords = ["private credit", "direct lending", "interval fund", "bcred", "cliffwater", "apollo", "blackstone", "leveraged loan", "clo", "bdc"]
+        stress_keywords = ["default", "redemption", "gating", "non-accrual", "nonaccrual", "markdown", "liquidity", "distress", "loss"]
+        pc_hits = sum(1 for kw in pc_keywords if kw in text_blob)
+        stress_hits = sum(1 for kw in stress_keywords if kw in text_blob)
+        if pc_hits or stress_hits:
+            notes.append(f"私募信貸新聞關鍵字：pc_hits={pc_hits} / stress_hits={stress_hits}")
+        if pc_hits >= 3 and stress_hits >= 2:
+            score += add_signal(signals, 8, "私募信貸壓力新聞升溫", f"pc_hits={pc_hits}, stress_hits={stress_hits}")
+        elif pc_hits >= 2 and stress_hits >= 1:
+            score += add_signal(signals, 4, "私募信貸新聞觀察", f"pc_hits={pc_hits}, stress_hits={stress_hits}")
+    except Exception:
+        notes.append("私募信貸新聞 proxy 暫時無法讀取；不影響主要市場資料。")
+
+    if not signals:
+        signals.append("無明顯私募信貸壓力警訊")
+    notes.append("本模組是 proxy：私募信貸不透明，因此以 HY OAS、Senior Loan、BDC、CLO proxy 與新聞壓力交叉觀察；單獨升溫不直接決定換倉。")
+    return RadarResult("私募信貸壓力 proxy 雷達", min(score, max_score), max_score, signals, notes)
+
 def score_taiwan_margin(df: pd.DataFrame) -> Tuple[RadarResult, pd.DataFrame]:
     signals, notes = [], []
     score, max_score = 0, 60
@@ -1890,13 +2026,13 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     level, level_name = score_level(total_risk)
     lines: List[str] = []
 
-    lines.append("🌐 全球市場雷達 v13.1｜總控 + 產業輪動 + Reddit 題材整合版")
+    lines.append("🌐 全球市場雷達 v13.2｜總控 + 產業輪動 + Reddit 題材整合版")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     lines.append(f"市場風險總分：{total_risk:.1f}/100")
     lines.append(f"等級：{level}")
     if raw_mode:
-        lines.append(f"V13.1 原始訊號：{raw_mode}")
+        lines.append(f"V13.2 原始訊號：{raw_mode}")
     lines.append(f"OS 3.1.1 最終操作模式：{mode}")
     lines.append(f"配置比例：{format_mode(mode)}")
     if os_state is not None:
@@ -1973,7 +2109,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     lines.append("- 433 是 R模式 / 危機後確認反攻；OS 3.1.1 規定沒有 crisis_memory 不啟動 433。")
     lines.append("- 主要觸發：VIX > 35 後回落、Nasdaq/SOXX 止跌、HYG/LQD 不再下跌、美債殖利率停止急升、00662 接近長期均線；433 最短持有 8 週，除非重新切 514。")
     lines.append("")
-    lines.append("提醒：你的 V13.1 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
+    lines.append("提醒：你的 V13.2 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
     return "\n".join(lines)
 
 
@@ -2103,7 +2239,7 @@ def theme_strength(df: pd.DataFrame, tickers: List[str]) -> Dict[str, object]:
 def build_industry_message(df: pd.DataFrame) -> str:
     now = TODAY.strftime("%Y-%m-%d %H:%M")
     lines: List[str] = []
-    lines.append("🏭 全球市場雷達 v13.1｜產業輪動雷達")
+    lines.append("🏭 全球市場雷達 v13.2｜產業輪動雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     all_themes = []
@@ -2241,7 +2377,7 @@ def build_topic_message() -> str:
     scored = score_topics(items)
 
     lines: List[str] = []
-    lines.append("🧭 全球市場雷達 v13.1｜Reddit / Hacker News / Google News 題材雷達")
+    lines.append("🧭 全球市場雷達 v13.2｜Reddit / Hacker News / Google News 題材雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     if not items:
@@ -2280,19 +2416,21 @@ def main() -> None:
         credit = score_credit(df)
         market = score_market(df)
         fed = score_fed_liquidity(df)
+        private_credit = score_private_credit_stress(df)
         breadth = score_breadth_greed(df)
         margin, margin_df = score_taiwan_margin(df)
-        results = [macro, credit, market, fed, margin, breadth]
+        results = [macro, credit, market, fed, private_credit, margin, breadth]
 
         # V13 總控權重：加入 Fed 流動性硬數據，但不讓單一模組主導。
-        # 宏觀 22%、信用 22%、市場動能 22%、Fed流動性 10%、融資 12%、廣度/貪婪 12%。
+        # 宏觀 20%、信用 20%、市場動能 20%、Fed流動性 10%、私募信貸 10%、融資 10%、廣度/貪婪 10%。
         total_risk = (
-            macro.risk_pct * 0.22
-            + credit.risk_pct * 0.22
-            + market.risk_pct * 0.22
+            macro.risk_pct * 0.20
+            + credit.risk_pct * 0.20
+            + market.risk_pct * 0.20
             + fed.risk_pct * 0.10
-            + margin.risk_pct * 0.12
-            + breadth.risk_pct * 0.12
+            + private_credit.risk_pct * 0.10
+            + margin.risk_pct * 0.10
+            + breadth.risk_pct * 0.10
         )
         total_risk = min(100.0, max(0.0, total_risk))
 
@@ -2308,7 +2446,7 @@ def main() -> None:
             data_health_ok=data_health_ok,
             data_health_warnings=data_health_warnings,
         )
-        reasons = [f"V13.1 原始訊號：{raw_mode}。"] + os_reasons + reasons
+        reasons = [f"V13.2 原始訊號：{raw_mode}。"] + os_reasons + reasons
         save_os31_state(new_os31_state)
 
         # 第一則：全球總控
@@ -2336,7 +2474,7 @@ def main() -> None:
         time.sleep(1.2)
         send_telegram(msg3)
     except Exception as e:
-        err = "🚨 全球市場雷達 v13.1 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
+        err = "🚨 全球市場雷達 v13.2 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
         print(err)
         send_telegram(err[:3800])
         raise
@@ -2359,7 +2497,7 @@ def fetch_fred_series(series_id: str) -> pd.Series:
     import urllib.parse
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.1",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.2",
         "Accept": "application/json,text/csv,text/plain,*/*",
         "Cache-Control": "no-cache",
     }
@@ -2444,7 +2582,7 @@ def _v13_save_snapshot():
         from datetime import datetime
         from zoneinfo import ZoneInfo
         snap = {
-            "version": "v13.1-mobile-flat",
+            "version": "v13.2-mobile-flat",
             "time_taipei": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
             "state_file": STATE_FILE,
             "tw_margin_history_file": MARGIN_HISTORY_FILE,
@@ -2459,9 +2597,9 @@ def _v13_save_snapshot():
         with open("storage/last_radar_snapshot.json", "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
         with open("storage/source_status.json", "w", encoding="utf-8") as f:
-            json.dump({"engine": {"status": "ok", "version": "v13.1-mobile-flat"}}, f, ensure_ascii=False, indent=2)
+            json.dump({"engine": {"status": "ok", "version": "v13.2-mobile-flat"}}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("V13.1 snapshot save failed:", e)
+        print("V13.2 snapshot save failed:", e)
 
 if __name__ == "__main__":
     try:
@@ -2474,7 +2612,7 @@ if __name__ == "__main__":
             if token and chat_id:
                 requests.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.1 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
+                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.2 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
                     timeout=15,
                 )
         except Exception:

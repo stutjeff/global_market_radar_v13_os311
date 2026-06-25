@@ -51,3 +51,7 @@ TELEGRAM_CHAT_ID
 - 再失敗時，嘗試官方 CSV 的 raw proxy 備援。
 - yml 加 `timeout-minutes: 15`，避免資料源卡住整個 workflow。
 - `FRED_API_KEY` 是選用，不設定也可以跑；設定後 Fed 流動性雷達穩定性會明顯提高。
+
+
+## V13.2 Private Credit Stress
+新增私募信貸壓力 proxy 雷達。
