@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-全球市場雷達 v13.3｜總控 + 產業輪動 + Reddit 題材整合版
+全球市場雷達 v13.4｜總控 + 產業輪動 + Reddit 題材整合版
 
 V13 重點：
 1. 警報權重分數：輸出 0~100 市場風險總分與等級。
@@ -2027,13 +2027,17 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     level, level_name = score_level(total_risk)
     lines: List[str] = []
 
-    lines.append("🌐 全球市場雷達 v13.3｜總控 + 產業輪動 + Reddit 題材整合版")
+    lines.append("🌐 全球市場雷達 v13.4｜總控 + 產業輪動 + Reddit 題材整合版")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     lines.append(f"市場風險總分：{total_risk:.1f}/100")
     lines.append(f"等級：{level}")
+    lines.append("")
+    lines.append("📌 加權總分摘要")
+    lines.append("總分權重：宏觀20% / 信用20% / 動能20% / Fed10% / 私募信貸10% / 融資10% / 廣度10%")
+    lines.append("提醒：亞洲槓桿壓力 beta 只提醒，不納入總分。")
     if raw_mode:
-        lines.append(f"V13.3 原始訊號：{raw_mode}")
+        lines.append(f"V13.4 原始訊號：{raw_mode}")
     lines.append(f"OS 3.1.1 最終操作模式：{mode}")
     lines.append(f"配置比例：{format_mode(mode)}")
     if os_state is not None:
@@ -2110,7 +2114,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     lines.append("- 433 是 R模式 / 危機後確認反攻；OS 3.1.1 規定沒有 crisis_memory 不啟動 433。")
     lines.append("- 主要觸發：VIX > 35 後回落、Nasdaq/SOXX 止跌、HYG/LQD 不再下跌、美債殖利率停止急升、00662 接近長期均線；433 最短持有 8 週，除非重新切 514。")
     lines.append("")
-    lines.append("提醒：你的 V13.3 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
+    lines.append("提醒：你的 V13.4 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
     return "\n".join(lines)
 
 
@@ -2240,7 +2244,7 @@ def theme_strength(df: pd.DataFrame, tickers: List[str]) -> Dict[str, object]:
 def build_industry_message(df: pd.DataFrame) -> str:
     now = TODAY.strftime("%Y-%m-%d %H:%M")
     lines: List[str] = []
-    lines.append("🏭 全球市場雷達 v13.3｜產業輪動雷達")
+    lines.append("🏭 全球市場雷達 v13.4｜產業輪動雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     all_themes = []
@@ -2378,7 +2382,7 @@ def build_topic_message() -> str:
     scored = score_topics(items)
 
     lines: List[str] = []
-    lines.append("🧭 全球市場雷達 v13.3｜Reddit / Hacker News / Google News 題材雷達")
+    lines.append("🧭 全球市場雷達 v13.4｜Reddit / Hacker News / Google News 題材雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     if not items:
@@ -2407,6 +2411,147 @@ def build_topic_message() -> str:
     lines.append("• 如果 Reddit 很熱、總控卻進入 514，通常不是追高訊號，而是提醒你別站到人群最後面；若 433 成立，仍要分批。")
     return "\n".join(lines)
 
+
+# ------------------------------------------------------------
+# V13.4 亞洲槓桿壓力提醒 beta
+# ------------------------------------------------------------
+def fetch_asia_leverage_news_items() -> List[Dict[str, str]]:
+    """News proxy only. This module is a reminder, not a trading signal."""
+    import xml.etree.ElementTree as ET
+    queries = [
+        "Taiwan margin financing balance surged default settlement",
+        "Taiwan failed settlement margin trading retail leverage",
+        "Korea margin debt KOSPI retail leverage",
+        "Korea leveraged ETF margin debt retail investors",
+    ]
+    items: List[Dict[str, str]] = []
+    for q in queries:
+        try:
+            text = fetch_text(
+                "https://news.google.com/rss/search",
+                params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                timeout=10,
+            )
+            if not text:
+                continue
+            root = ET.fromstring(text)
+            for item in root.findall(".//item")[:5]:
+                title = item.findtext("title") or ""
+                if title:
+                    items.append({"source": "Google News", "title": title[:180], "query": q})
+        except Exception:
+            continue
+        time.sleep(0.15)
+    return items
+
+
+def score_asia_leverage_reminder(df: pd.DataFrame, margin_df: pd.DataFrame) -> RadarResult:
+    """Reminder-only radar for Taiwan / Asia leverage heat.
+
+    This is intentionally NOT included in the weighted total score and must not
+    block Data Health. It only reminds the user to watch leverage excess.
+    """
+    score = 0
+    max_score = 100
+    signals: List[str] = []
+    notes: List[str] = []
+
+    # 1) TWSE margin long-window change if local history is long enough.
+    try:
+        if margin_df is not None and not margin_df.empty and "margin_balance" in margin_df.columns:
+            mdf = margin_df.copy()
+            mdf["margin_balance"] = pd.to_numeric(mdf["margin_balance"], errors="coerce")
+            mdf = mdf.dropna(subset=["margin_balance"])
+            if "date" in mdf.columns:
+                mdf["date_dt"] = pd.to_datetime(mdf["date"].astype(str), errors="coerce")
+                mdf = mdf.dropna(subset=["date_dt"]).sort_values("date_dt")
+            else:
+                mdf = mdf.reset_index(drop=True)
+                mdf["date_dt"] = pd.NaT
+
+            if len(mdf) >= 2:
+                latest = float(mdf["margin_balance"].iloc[-1])
+                first = float(mdf["margin_balance"].iloc[0])
+                chg_all = latest / first - 1 if first else np.nan
+                notes.append(f"台股融資本地累積：{len(mdf)}筆；累積變化 {pct(chg_all)}。")
+
+            if len(mdf) >= 200:
+                latest = float(mdf["margin_balance"].iloc[-1])
+                # Use about one trading year if exact 12M not available.
+                base = float(mdf["margin_balance"].iloc[-200])
+                chg12m = latest / base - 1 if base else np.nan
+                notes.append(f"台股融資約12M/200交易日變化：{pct(chg12m)}。")
+                if not pd.isna(chg12m):
+                    if chg12m > 1.50:
+                        score += add_signal(signals, 15, "台股融資12M暴增", f"約 {pct(chg12m)}")
+                    elif chg12m > 1.00:
+                        score += add_signal(signals, 10, "台股融資12M大幅增加", f"約 {pct(chg12m)}")
+                    elif chg12m > 0.50:
+                        score += add_signal(signals, 6, "台股融資12M升溫", f"約 {pct(chg12m)}")
+            else:
+                notes.append("台股融資本地資料尚未滿約200筆，暫時無法計算12M增幅；先用短期融資雷達與新聞提醒觀察。")
+
+            if len(mdf) >= 5:
+                latest = float(mdf["margin_balance"].iloc[-1])
+                base5 = float(mdf["margin_balance"].iloc[-5])
+                chg5 = latest / base5 - 1 if base5 else np.nan
+                if not pd.isna(chg5) and chg5 > 0.05:
+                    score += add_signal(signals, 8, "台股融資短期快速升溫", f"近5筆 {pct(chg5)}")
+        else:
+            notes.append("台股融資資料不足，亞洲槓桿提醒只看新聞 proxy。")
+    except Exception as e:
+        notes.append(f"台股融資12M提醒計算失敗：{type(e).__name__}")
+
+    # 2) Taiwan weighted index near high + margin rising = heat reminder
+    try:
+        twii = series(df, "Close", "^TWII")
+        if len(twii) >= 240 and margin_df is not None and not margin_df.empty:
+            dist_high = twii.iloc[-1] / twii.rolling(240).max().iloc[-1] - 1
+            if dist_high > -0.05:
+                notes.append(f"加權指數距一年高點：{pct(dist_high)}。")
+                # only mild reminder; actual leverage is handled by margin radar
+                score += add_signal(signals, 4, "台股接近高檔", f"距一年高點 {pct(dist_high)}")
+    except Exception:
+        pass
+
+    # 3) Failed settlement / Korea margin news proxy.
+    try:
+        items = fetch_asia_leverage_news_items()
+        blob = " ".join([x.get("title", "") for x in items]).lower()
+        taiwan_words = ["taiwan", "twse", "margin", "settlement", "default", "failed settlement", "retail leverage"]
+        korea_words = ["korea", "kospi", "margin debt", "leveraged etf", "retail investors", "guarantee debt"]
+        stress_words = ["surge", "record", "default", "failed", "plunge", "risk", "warning", "leverage"]
+
+        tw_hits = sum(1 for w in taiwan_words if w in blob)
+        kr_hits = sum(1 for w in korea_words if w in blob)
+        stress_hits = sum(1 for w in stress_words if w in blob)
+
+        if items:
+            notes.append(f"亞洲槓桿新聞 proxy：Taiwan hits={tw_hits} / Korea hits={kr_hits} / stress hits={stress_hits}。")
+        if tw_hits >= 3 and stress_hits >= 2:
+            score += add_signal(signals, 8, "台灣槓桿/違約交割新聞升溫", "新聞 proxy 提醒")
+        elif tw_hits >= 2 and stress_hits >= 1:
+            score += add_signal(signals, 4, "台灣槓桿新聞觀察", "新聞 proxy 提醒")
+
+        if kr_hits >= 3 and stress_hits >= 2:
+            score += add_signal(signals, 8, "韓國槓桿新聞升溫", "亞洲散戶槓桿共振 proxy")
+        elif kr_hits >= 2 and stress_hits >= 1:
+            score += add_signal(signals, 4, "韓國槓桿新聞觀察", "新聞 proxy 提醒")
+
+        if items:
+            for item in items[:5]:
+                title = item.get("title", "")
+                if title:
+                    notes.append(f"新聞觀察：[{item.get('source','News')}] {title}")
+    except Exception:
+        notes.append("亞洲槓桿新聞 proxy 暫時無法讀取；不影響主控。")
+
+    if not signals:
+        signals.append("無明顯亞洲槓桿壓力提醒")
+
+    notes.append("本模組為提醒 beta：不納入加權總分、不阻止模式切換；只提醒台灣融資12M、違約交割新聞、韓國槓桿共振等泡沫後段訊號。")
+    return RadarResult("亞洲槓桿壓力提醒 beta", min(score, max_score), max_score, signals, notes)
+
 def main() -> None:
     try:
         df = download_market_data()
@@ -2420,7 +2565,8 @@ def main() -> None:
         private_credit = score_private_credit_stress(df)
         breadth = score_breadth_greed(df)
         margin, margin_df = score_taiwan_margin(df)
-        results = [macro, credit, market, fed, private_credit, margin, breadth]
+        asia_leverage = score_asia_leverage_reminder(df, margin_df)
+        results = [macro, credit, market, fed, private_credit, margin, breadth, asia_leverage]
 
         # V13 總控權重：加入 Fed 流動性硬數據，但不讓單一模組主導。
         # 總分權重：宏觀 20%、信用 20%、市場動能 20%、Fed流動性 10%、私募信貸 10%、融資 10%、廣度/貪婪 10%。
@@ -2447,7 +2593,7 @@ def main() -> None:
             data_health_ok=data_health_ok,
             data_health_warnings=data_health_warnings,
         )
-        reasons = [f"V13.3 原始訊號：{raw_mode}。"] + os_reasons + reasons
+        reasons = [f"V13.4 原始訊號：{raw_mode}。"] + os_reasons + reasons
         save_os31_state(new_os31_state)
 
         # 第一則：全球總控
@@ -2475,7 +2621,7 @@ def main() -> None:
         time.sleep(1.2)
         send_telegram(msg3)
     except Exception as e:
-        err = "🚨 全球市場雷達 v13.3 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
+        err = "🚨 全球市場雷達 v13.4 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
         print(err)
         send_telegram(err[:3800])
         raise
@@ -2498,7 +2644,7 @@ def fetch_fred_series(series_id: str) -> pd.Series:
     import urllib.parse
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.3",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.4",
         "Accept": "application/json,text/csv,text/plain,*/*",
         "Cache-Control": "no-cache",
     }
@@ -2583,7 +2729,7 @@ def _v13_save_snapshot():
         from datetime import datetime
         from zoneinfo import ZoneInfo
         snap = {
-            "version": "v13.3-mobile-flat",
+            "version": "v13.4-mobile-flat",
             "time_taipei": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
             "state_file": STATE_FILE,
             "tw_margin_history_file": MARGIN_HISTORY_FILE,
@@ -2598,9 +2744,9 @@ def _v13_save_snapshot():
         with open("storage/last_radar_snapshot.json", "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
         with open("storage/source_status.json", "w", encoding="utf-8") as f:
-            json.dump({"engine": {"status": "ok", "version": "v13.3-mobile-flat"}}, f, ensure_ascii=False, indent=2)
+            json.dump({"engine": {"status": "ok", "version": "v13.4-mobile-flat"}}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("V13.2 snapshot save failed:", e)
+        print("V13.4 snapshot save failed:", e)
 
 if __name__ == "__main__":
     try:
@@ -2613,7 +2759,7 @@ if __name__ == "__main__":
             if token and chat_id:
                 requests.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.3 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
+                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.4 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
                     timeout=15,
                 )
         except Exception:
