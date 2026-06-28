@@ -1,4 +1,4 @@
-# 全球市場雷達 V13.5.2 + OS 3.1.1 手機版單檔部署版
+# 全球市場雷達 V13.5.3 + OS 3.1.1 手機版單檔部署版
 
 這版是給 GitHub 手機網頁上傳用的 V13。
 
@@ -121,3 +121,14 @@ TypeError: apply_os311_state_machine() got an unexpected keyword argument 'trend
 ```
 
 本版只保留 `trend_lines` 給 Telegram 格式化函式使用，不再傳入 OS 3.1.1 狀態機。
+
+
+## V13.5.3 hotfix
+
+再次修正 `trend_lines` 被誤放進 `apply_os311_state_machine()` 參數的問題。
+
+本版確認：
+
+- `apply_os311_state_machine()` 不接收 `trend_lines`
+- `trend_lines` 只傳給 `format_result()` 做 Telegram 顯示
+- 歷史趨勢追蹤保留
