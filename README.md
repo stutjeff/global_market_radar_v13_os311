@@ -1,4 +1,4 @@
-# 全球市場雷達 V13.5.1 + OS 3.1.1 手機版單檔部署版
+# 全球市場雷達 V13.5.2 + OS 3.1.1 手機版單檔部署版
 
 這版是給 GitHub 手機網頁上傳用的 V13。
 
@@ -108,3 +108,16 @@ UnboundLocalError: cannot access local variable 'trend_lines'
 ```
 
 本版讓 `trend_lines` 預設為空陣列，並讓歷史紀錄寫入失敗時降級為提示，不影響主雷達執行。
+
+
+## V13.5.2 hotfix
+
+修正 V13.5.1 把 `trend_lines` 誤傳給 `apply_os311_state_machine()` 的問題。
+
+錯誤訊息：
+
+```text
+TypeError: apply_os311_state_machine() got an unexpected keyword argument 'trend_lines'
+```
+
+本版只保留 `trend_lines` 給 Telegram 格式化函式使用，不再傳入 OS 3.1.1 狀態機。
