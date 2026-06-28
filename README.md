@@ -1,4 +1,4 @@
-# 全球市場雷達 V13.4 + OS 3.1.1 手機版單檔部署版
+# 全球市場雷達 V13.5 + OS 3.1.1 手機版單檔部署版
 
 這版是給 GitHub 手機網頁上傳用的 V13。
 
@@ -77,3 +77,23 @@ TELEGRAM_CHAT_ID
 - 韓國 margin debt / leveraged ETF / retail leverage 新聞 proxy
 
 這個模組是泡沫後段提醒器，不是買賣訊號。
+
+
+## V13.5 Radar History / Trend Tracking
+
+新增「歷史紀錄 / 趨勢追蹤」。
+
+新增自動產生：
+
+```text
+storage/radar_score_history.csv
+storage/module_score_history.csv
+storage/market_backfill_90d.csv
+storage/radar_trend_summary.json
+```
+
+原則：
+
+- 能回補的市場價格資料，回補近約 90 個交易日。
+- 新聞 / 題材 / 亞洲槓桿新聞 proxy 無法可靠回補，從現在開始慢慢累積。
+- Telegram 主雷達新增「📈 風險趨勢追蹤」，用來判斷風險是升溫、降溫，還是單日雜訊。

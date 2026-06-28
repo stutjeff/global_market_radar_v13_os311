@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-全球市場雷達 v13.4｜總控 + 產業輪動 + Reddit 題材整合版
+全球市場雷達 v13.5｜總控 + 產業輪動 + Reddit 題材整合版
 
 V13 重點：
 1. 警報權重分數：輸出 0~100 市場風險總分與等級。
@@ -2022,12 +2022,214 @@ def daily_snapshot(df: pd.DataFrame, margin_df: pd.DataFrame) -> List[str]:
     return lines
 
 
-def format_result(results: List[RadarResult], total_risk: float, mode: str, stance: str, reasons: List[str], next_watch: List[str], rebound: bool, df: pd.DataFrame, margin_df: pd.DataFrame, raw_mode: str = '', os_state: Optional[Dict[str, object]] = None, data_health_lines: Optional[List[str]] = None, data_health_warnings: Optional[List[str]] = None) -> str:
+
+# ------------------------------------------------------------
+# V13.5 歷史紀錄 / 趨勢追蹤
+# ------------------------------------------------------------
+RADAR_SCORE_HISTORY_FILE = "storage/radar_score_history.csv"
+MODULE_SCORE_HISTORY_FILE = "storage/module_score_history.csv"
+MARKET_BACKFILL_90D_FILE = "storage/market_backfill_90d.csv"
+TREND_SUMMARY_FILE = "storage/radar_trend_summary.json"
+
+
+def _safe_latest(s: pd.Series) -> float:
+    try:
+        s = s.dropna()
+        if len(s) == 0:
+            return np.nan
+        return float(s.iloc[-1])
+    except Exception:
+        return np.nan
+
+
+def write_market_backfill_90d(df: pd.DataFrame) -> None:
+    """Backfill what can be backfilled from yfinance: prices/ratios for recent ~90 trading days.
+
+    News modules cannot be truly backfilled, so they only accumulate from live runs.
+    """
+    try:
+        os.makedirs("storage", exist_ok=True)
+        tickers = ["^VIX", "QQQ", "SMH", "HYG", "LQD", "JNK", "TLT", "^TNX", "JPY=X",
+                   "00662.TW", "00670L.TW", "00865B.TW", "^TWII"]
+        rows = []
+        # Use QQQ dates as base if available.
+        base = series(df, "Close", "QQQ")
+        if len(base) == 0:
+            return
+        dates = list(base.dropna().index)[-90:]
+        for dt in dates:
+            row = {"date": pd.Timestamp(dt).strftime("%Y-%m-%d")}
+            for tk in tickers:
+                s = series(df, "Close", tk)
+                try:
+                    row[tk] = float(s.loc[:dt].dropna().iloc[-1])
+                except Exception:
+                    row[tk] = np.nan
+            try:
+                row["HYG_LQD"] = row["HYG"] / row["LQD"] if row.get("HYG") and row.get("LQD") else np.nan
+            except Exception:
+                row["HYG_LQD"] = np.nan
+            try:
+                row["JNK_LQD"] = row["JNK"] / row["LQD"] if row.get("JNK") and row.get("LQD") else np.nan
+            except Exception:
+                row["JNK_LQD"] = np.nan
+            rows.append(row)
+        if rows:
+            pd.DataFrame(rows).to_csv(MARKET_BACKFILL_90D_FILE, index=False)
+    except Exception as e:
+        print("write_market_backfill_90d failed:", e)
+
+
+def append_radar_history(total_risk: float,
+                         mode: str,
+                         raw_mode: str,
+                         data_health_ok: bool,
+                         results: List[RadarResult],
+                         df: pd.DataFrame,
+                         margin_df: pd.DataFrame) -> List[str]:
+    """Append current run score/module history and return trend summary lines."""
+    import json
+
+    os.makedirs("storage", exist_ok=True)
+    now_iso = TODAY.isoformat(timespec="seconds")
+    row = {
+        "time_taipei": now_iso,
+        "date": TODAY.strftime("%Y-%m-%d"),
+        "total_risk": round(float(total_risk), 4),
+        "mode": mode,
+        "raw_mode": raw_mode,
+        "data_health_ok": bool(data_health_ok),
+        "vix": _safe_latest(series(df, "Close", "^VIX")),
+        "qqq": _safe_latest(series(df, "Close", "QQQ")),
+        "hyg_lqd": np.nan,
+        "usdjpy": _safe_latest(series(df, "Close", "JPY=X")),
+        "twii": _safe_latest(series(df, "Close", "^TWII")),
+        "tw_margin": np.nan,
+    }
+    try:
+        row["hyg_lqd"] = _safe_latest(series(df, "Close", "HYG")) / _safe_latest(series(df, "Close", "LQD"))
+    except Exception:
+        pass
+    try:
+        if margin_df is not None and not margin_df.empty and "margin_balance" in margin_df.columns:
+            row["tw_margin"] = float(pd.to_numeric(margin_df["margin_balance"], errors="coerce").dropna().iloc[-1])
+    except Exception:
+        pass
+
+    for res in results:
+        key = str(res.name).replace(" ", "_").replace("/", "_").replace("｜", "_")
+        row[f"{key}_score"] = res.score
+        row[f"{key}_risk_pct"] = round(float(res.risk_pct), 4)
+
+    try:
+        old = pd.read_csv(RADAR_SCORE_HISTORY_FILE) if os.path.exists(RADAR_SCORE_HISTORY_FILE) else pd.DataFrame()
+        hist = pd.concat([old, pd.DataFrame([row])], ignore_index=True)
+        # keep last 400 runs, avoid exact duplicate timestamp
+        hist = hist.drop_duplicates(subset=["time_taipei"], keep="last").tail(400)
+        hist.to_csv(RADAR_SCORE_HISTORY_FILE, index=False)
+    except Exception as e:
+        print("append radar history failed:", e)
+        hist = pd.DataFrame([row])
+
+    # separate compact module history
+    try:
+        mod_rows = []
+        for res in results:
+            mod_rows.append({
+                "time_taipei": now_iso,
+                "date": TODAY.strftime("%Y-%m-%d"),
+                "module": res.name,
+                "score": res.score,
+                "max_score": res.max_score,
+                "risk_pct": round(float(res.risk_pct), 4),
+                "signals": " | ".join(res.signals[:5]) if res.signals else "",
+            })
+        oldm = pd.read_csv(MODULE_SCORE_HISTORY_FILE) if os.path.exists(MODULE_SCORE_HISTORY_FILE) else pd.DataFrame()
+        mhist = pd.concat([oldm, pd.DataFrame(mod_rows)], ignore_index=True).tail(3000)
+        mhist.to_csv(MODULE_SCORE_HISTORY_FILE, index=False)
+    except Exception as e:
+        print("append module history failed:", e)
+
+    trend_lines = build_radar_trend_summary(hist)
+    try:
+        with open(TREND_SUMMARY_FILE, "w", encoding="utf-8") as f:
+            json.dump({"time_taipei": now_iso, "trend_lines": trend_lines}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return trend_lines
+
+
+def _trend_word(delta: float) -> str:
+    if pd.isna(delta):
+        return "資料不足"
+    if delta >= 10:
+        return "明顯升溫"
+    if delta >= 3:
+        return "緩慢升溫"
+    if delta <= -10:
+        return "明顯降溫"
+    if delta <= -3:
+        return "緩慢降溫"
+    return "大致持平"
+
+
+def build_radar_trend_summary(hist: pd.DataFrame) -> List[str]:
+    try:
+        if hist is None or hist.empty:
+            return ["歷史紀錄剛開始建立，尚無趨勢。"]
+        hist = hist.copy()
+        hist["total_risk"] = pd.to_numeric(hist.get("total_risk"), errors="coerce")
+        n = len(hist)
+        if n < 2:
+            return ["歷史紀錄第 1 筆：先建立基準；新聞類雷達會從現在開始累積。"]
+
+        latest = float(hist["total_risk"].iloc[-1])
+        prev = float(hist["total_risk"].iloc[-2])
+        first = float(hist["total_risk"].iloc[0])
+        delta_1 = latest - prev
+        delta_all = latest - first
+        window = min(20, n)
+        start20 = float(hist["total_risk"].iloc[-window])
+        delta20 = latest - start20
+
+        lines = [
+            f"已累積 {n} 筆雷達紀錄；總分 {first:.1f} → {latest:.1f}（累積 {delta_all:+.1f}）。",
+            f"近 {window} 筆總分 {start20:.1f} → {latest:.1f}：{_trend_word(delta20)}（{delta20:+.1f}）。",
+            f"最近一筆變化：{prev:.1f} → {latest:.1f}（{delta_1:+.1f}）。",
+        ]
+
+        # highlight module trends from risk_pct columns
+        risk_cols = [c for c in hist.columns if c.endswith("_risk_pct")]
+        module_moves = []
+        for c in risk_cols:
+            try:
+                s = pd.to_numeric(hist[c], errors="coerce").dropna()
+                if len(s) >= 2:
+                    w = min(20, len(s))
+                    d = float(s.iloc[-1] - s.iloc[-w])
+                    if abs(d) >= 5:
+                        name = c.replace("_risk_pct", "").replace("_", " ")
+                        module_moves.append((abs(d), name, d, float(s.iloc[-1])))
+            except Exception:
+                continue
+        module_moves.sort(reverse=True)
+        if module_moves:
+            for _, name, d, val in module_moves[:3]:
+                lines.append(f"{name}：近 {window} 筆 {d:+.1f}pct，目前 {val:.1f}%。")
+        else:
+            lines.append("各模組目前沒有明顯連續升溫；若新聞很熱但硬資料冷，先列為觀察，不直接換檔。")
+
+        lines.append("可回補的市場價格已寫入 market_backfill_90d.csv；新聞/題材類無法可靠回補，將從現在開始慢慢累積。")
+        return lines
+    except Exception as e:
+        return [f"趨勢摘要暫時無法產生：{type(e).__name__}"]
+
+def format_result(results: List[RadarResult], total_risk: float, mode: str, stance: str, reasons: List[str], next_watch: List[str], rebound: bool, df: pd.DataFrame, margin_df: pd.DataFrame, raw_mode: str = '', os_state: Optional[Dict[str, object]] = None, data_health_lines: Optional[List[str]] = None, data_health_warnings: Optional[List[str]] = None, trend_lines: Optional[List[str]] = None) -> str:
     now = TODAY.strftime("%Y-%m-%d %H:%M")
     level, level_name = score_level(total_risk)
     lines: List[str] = []
 
-    lines.append("🌐 全球市場雷達 v13.4｜總控 + 產業輪動 + Reddit 題材整合版")
+    lines.append("🌐 全球市場雷達 v13.5｜總控 + 產業輪動 + Reddit 題材整合版")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     lines.append(f"市場風險總分：{total_risk:.1f}/100")
@@ -2036,8 +2238,13 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     lines.append("📌 加權總分摘要")
     lines.append("總分權重：宏觀20% / 信用20% / 動能20% / Fed10% / 私募信貸10% / 融資10% / 廣度10%")
     lines.append("提醒：亞洲槓桿壓力 beta 只提醒，不納入總分。")
+    if trend_lines:
+        lines.append("")
+        lines.append("📈 風險趨勢追蹤")
+        for x in trend_lines[:7]:
+            lines.append(f"- {x}")
     if raw_mode:
-        lines.append(f"V13.4 原始訊號：{raw_mode}")
+        lines.append(f"V13.5 原始訊號：{raw_mode}")
     lines.append(f"OS 3.1.1 最終操作模式：{mode}")
     lines.append(f"配置比例：{format_mode(mode)}")
     if os_state is not None:
@@ -2114,7 +2321,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     lines.append("- 433 是 R模式 / 危機後確認反攻；OS 3.1.1 規定沒有 crisis_memory 不啟動 433。")
     lines.append("- 主要觸發：VIX > 35 後回落、Nasdaq/SOXX 止跌、HYG/LQD 不再下跌、美債殖利率停止急升、00662 接近長期均線；433 最短持有 8 週，除非重新切 514。")
     lines.append("")
-    lines.append("提醒：你的 V13.4 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
+    lines.append("提醒：你的 V13.5 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
     return "\n".join(lines)
 
 
@@ -2244,7 +2451,7 @@ def theme_strength(df: pd.DataFrame, tickers: List[str]) -> Dict[str, object]:
 def build_industry_message(df: pd.DataFrame) -> str:
     now = TODAY.strftime("%Y-%m-%d %H:%M")
     lines: List[str] = []
-    lines.append("🏭 全球市場雷達 v13.4｜產業輪動雷達")
+    lines.append("🏭 全球市場雷達 v13.5｜產業輪動雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     all_themes = []
@@ -2382,7 +2589,7 @@ def build_topic_message() -> str:
     scored = score_topics(items)
 
     lines: List[str] = []
-    lines.append("🧭 全球市場雷達 v13.4｜Reddit / Hacker News / Google News 題材雷達")
+    lines.append("🧭 全球市場雷達 v13.5｜Reddit / Hacker News / Google News 題材雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     if not items:
@@ -2592,9 +2799,14 @@ def main() -> None:
             raw_mode, raw_stance, os31_state,
             data_health_ok=data_health_ok,
             data_health_warnings=data_health_warnings,
+            trend_lines=trend_lines,
         )
-        reasons = [f"V13.4 原始訊號：{raw_mode}。"] + os_reasons + reasons
+        reasons = [f"V13.5 原始訊號：{raw_mode}。"] + os_reasons + reasons
         save_os31_state(new_os31_state)
+
+        # V13.5：可回補市場資料 + 雷達分數歷史累積
+        write_market_backfill_90d(df)
+        trend_lines = append_radar_history(total_risk, mode, raw_mode, data_health_ok, results, df, margin_df)
 
         # 第一則：全球總控
         msg1 = format_result(
@@ -2621,7 +2833,7 @@ def main() -> None:
         time.sleep(1.2)
         send_telegram(msg3)
     except Exception as e:
-        err = "🚨 全球市場雷達 v13.4 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
+        err = "🚨 全球市場雷達 v13.5 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
         print(err)
         send_telegram(err[:3800])
         raise
@@ -2644,7 +2856,7 @@ def fetch_fred_series(series_id: str) -> pd.Series:
     import urllib.parse
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.4",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.5",
         "Accept": "application/json,text/csv,text/plain,*/*",
         "Cache-Control": "no-cache",
     }
@@ -2729,7 +2941,7 @@ def _v13_save_snapshot():
         from datetime import datetime
         from zoneinfo import ZoneInfo
         snap = {
-            "version": "v13.4-mobile-flat",
+            "version": "v13.5-mobile-flat",
             "time_taipei": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
             "state_file": STATE_FILE,
             "tw_margin_history_file": MARGIN_HISTORY_FILE,
@@ -2744,7 +2956,7 @@ def _v13_save_snapshot():
         with open("storage/last_radar_snapshot.json", "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
         with open("storage/source_status.json", "w", encoding="utf-8") as f:
-            json.dump({"engine": {"status": "ok", "version": "v13.4-mobile-flat"}}, f, ensure_ascii=False, indent=2)
+            json.dump({"engine": {"status": "ok", "version": "v13.5-mobile-flat"}}, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("V13.4 snapshot save failed:", e)
 
@@ -2759,7 +2971,7 @@ if __name__ == "__main__":
             if token and chat_id:
                 requests.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.4 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
+                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.5 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
                     timeout=15,
                 )
         except Exception:
