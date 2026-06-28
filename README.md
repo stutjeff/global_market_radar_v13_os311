@@ -1,4 +1,4 @@
-# 全球市場雷達 V13.5 + OS 3.1.1 手機版單檔部署版
+# 全球市場雷達 V13.5.1 + OS 3.1.1 手機版單檔部署版
 
 這版是給 GitHub 手機網頁上傳用的 V13。
 
@@ -97,3 +97,14 @@ storage/radar_trend_summary.json
 - 能回補的市場價格資料，回補近約 90 個交易日。
 - 新聞 / 題材 / 亞洲槓桿新聞 proxy 無法可靠回補，從現在開始慢慢累積。
 - Telegram 主雷達新增「📈 風險趨勢追蹤」，用來判斷風險是升溫、降溫，還是單日雜訊。
+
+
+## V13.5.1 hotfix
+
+修正 V13.5 在少數執行路徑中 `trend_lines` 尚未建立就被傳入 Telegram 格式化函式，造成：
+
+```text
+UnboundLocalError: cannot access local variable 'trend_lines'
+```
+
+本版讓 `trend_lines` 預設為空陣列，並讓歷史紀錄寫入失敗時降級為提示，不影響主雷達執行。

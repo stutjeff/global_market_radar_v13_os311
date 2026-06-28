@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-全球市場雷達 v13.5｜總控 + 產業輪動 + Reddit 題材整合版
+全球市場雷達 v13.5.1｜總控 + 產業輪動 + Reddit 題材整合版
 
 V13 重點：
 1. 警報權重分數：輸出 0~100 市場風險總分與等級。
@@ -2229,7 +2229,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     level, level_name = score_level(total_risk)
     lines: List[str] = []
 
-    lines.append("🌐 全球市場雷達 v13.5｜總控 + 產業輪動 + Reddit 題材整合版")
+    lines.append("🌐 全球市場雷達 v13.5.1｜總控 + 產業輪動 + Reddit 題材整合版")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     lines.append(f"市場風險總分：{total_risk:.1f}/100")
@@ -2244,7 +2244,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
         for x in trend_lines[:7]:
             lines.append(f"- {x}")
     if raw_mode:
-        lines.append(f"V13.5 原始訊號：{raw_mode}")
+        lines.append(f"V13.5.1 原始訊號：{raw_mode}")
     lines.append(f"OS 3.1.1 最終操作模式：{mode}")
     lines.append(f"配置比例：{format_mode(mode)}")
     if os_state is not None:
@@ -2321,7 +2321,7 @@ def format_result(results: List[RadarResult], total_risk: float, mode: str, stan
     lines.append("- 433 是 R模式 / 危機後確認反攻；OS 3.1.1 規定沒有 crisis_memory 不啟動 433。")
     lines.append("- 主要觸發：VIX > 35 後回落、Nasdaq/SOXX 止跌、HYG/LQD 不再下跌、美債殖利率停止急升、00662 接近長期均線；433 最短持有 8 週，除非重新切 514。")
     lines.append("")
-    lines.append("提醒：你的 V13.5 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
+    lines.append("提醒：你的 V13.5.1 是飛機儀表板，不是自動駕駛。它能告訴你高度、風速、燃料、引擎溫度；最後拉桿的人還是你。")
     return "\n".join(lines)
 
 
@@ -2451,7 +2451,7 @@ def theme_strength(df: pd.DataFrame, tickers: List[str]) -> Dict[str, object]:
 def build_industry_message(df: pd.DataFrame) -> str:
     now = TODAY.strftime("%Y-%m-%d %H:%M")
     lines: List[str] = []
-    lines.append("🏭 全球市場雷達 v13.5｜產業輪動雷達")
+    lines.append("🏭 全球市場雷達 v13.5.1｜產業輪動雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     all_themes = []
@@ -2589,7 +2589,7 @@ def build_topic_message() -> str:
     scored = score_topics(items)
 
     lines: List[str] = []
-    lines.append("🧭 全球市場雷達 v13.5｜Reddit / Hacker News / Google News 題材雷達")
+    lines.append("🧭 全球市場雷達 v13.5.1｜Reddit / Hacker News / Google News 題材雷達")
     lines.append(f"時間：{now}（台北）")
     lines.append("")
     if not items:
@@ -2799,14 +2799,18 @@ def main() -> None:
             raw_mode, raw_stance, os31_state,
             data_health_ok=data_health_ok,
             data_health_warnings=data_health_warnings,
-            trend_lines=trend_lines,
+            trend_lines=trend_lines if 'trend_lines' in locals() else [],
         )
-        reasons = [f"V13.5 原始訊號：{raw_mode}。"] + os_reasons + reasons
+        reasons = [f"V13.5.1 原始訊號：{raw_mode}。"] + os_reasons + reasons
         save_os31_state(new_os31_state)
 
         # V13.5：可回補市場資料 + 雷達分數歷史累積
         write_market_backfill_90d(df)
-        trend_lines = append_radar_history(total_risk, mode, raw_mode, data_health_ok, results, df, margin_df)
+        try:
+            trend_lines = append_radar_history(total_risk, mode, raw_mode, data_health_ok, results, df, margin_df)
+        except Exception as e:
+            print("append_radar_history failed:", e)
+            trend_lines = ["趨勢紀錄本次寫入失敗，下一次會再嘗試；不影響主雷達判斷。"]
 
         # 第一則：全球總控
         msg1 = format_result(
@@ -2833,7 +2837,7 @@ def main() -> None:
         time.sleep(1.2)
         send_telegram(msg3)
     except Exception as e:
-        err = "🚨 全球市場雷達 v13.5 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
+        err = "🚨 全球市場雷達 v13.5.1 執行失敗\n" + str(e) + "\n\n" + traceback.format_exc()
         print(err)
         send_telegram(err[:3800])
         raise
@@ -2856,7 +2860,7 @@ def fetch_fred_series(series_id: str) -> pd.Series:
     import urllib.parse
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.5",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 GlobalMarketRadarV13.5.1",
         "Accept": "application/json,text/csv,text/plain,*/*",
         "Cache-Control": "no-cache",
     }
@@ -2941,7 +2945,7 @@ def _v13_save_snapshot():
         from datetime import datetime
         from zoneinfo import ZoneInfo
         snap = {
-            "version": "v13.5-mobile-flat",
+            "version": "v13.5.1-mobile-flat",
             "time_taipei": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
             "state_file": STATE_FILE,
             "tw_margin_history_file": MARGIN_HISTORY_FILE,
@@ -2956,7 +2960,7 @@ def _v13_save_snapshot():
         with open("storage/last_radar_snapshot.json", "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
         with open("storage/source_status.json", "w", encoding="utf-8") as f:
-            json.dump({"engine": {"status": "ok", "version": "v13.5-mobile-flat"}}, f, ensure_ascii=False, indent=2)
+            json.dump({"engine": {"status": "ok", "version": "v13.5.1-mobile-flat"}}, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("V13.4 snapshot save failed:", e)
 
@@ -2971,7 +2975,7 @@ if __name__ == "__main__":
             if token and chat_id:
                 requests.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.5 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
+                    data={"chat_id": chat_id, "text": f"❌ 全球市場雷達 v13.5.1 執行失敗\n\n錯誤：{type(e).__name__}: {e}\n\n請到 GitHub Actions 查看 log。"},
                     timeout=15,
                 )
         except Exception:
